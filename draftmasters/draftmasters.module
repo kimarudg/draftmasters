@@ -1,0 +1,681 @@
+<?php
+/**
+* Implements hook_menu()
+*
+**/
+function draftmasters_menu(){
+  $items = array();
+  $items['request/bid'] = array(
+    'title'            => 'Request bid',
+    'page callback'    => 'create_user_bid',
+    'access arguments' => array('administer site configuration'),
+    'type'             => MENU_NORMAL_ITEM,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function draftmasters_form_user_login_alter(&$form, &$form_state, $form_id) {
+  $form['intro'] = array(
+    '#type' => 'markup',
+    '#weight' => -1,
+    '#markup' => '<p><img src="/'.drupal_get_path('theme', 'draftmasters').'/img/draftmasterslogo.png" width="200" /></p>',
+  );
+  $form['name']['#attributes']['placeholder'] = 'Username or email';
+  $form['name']['#attributes']['class'][] ="form-control";
+  $form['name']['#theme_wrappers'] =array();
+  $form['name']['#description'] = '';
+  $form['name']['#title'] = '';
+  $form['name']['#title_display'] = 'none';
+  $form['pass']['#attributes']['placeholder'] = 'Password';
+  $form['pass']['#attributes']['class'][] = "form-control";
+  $form['pass']['#title'] = '';
+  $form['pass']['#theme_wrappers'] =array();
+  $form['pass']['#title_display'] = 'none';
+  $form['pass']['#description'] = '';
+  $form['actions']['#weight'] = 1;
+  $form['password'] = array(
+    '#type' => 'markup',
+    '#weight' => 2,
+    '#markup' => ' <p><a href="/expert/register">Register as an Expert</a></p>
+    <p> <a href="/client/register">Register as a Client</a></p>
+    <p><a href="/user/password">Forgot your password?</a></p>
+    '
+  );
+  if (isset($form['actions'])){
+	foreach ($form['actions'] as $key => $value) {
+		if (is_array($form['actions'][$key])){
+			$form['actions'][$key]['#attributes']['class'] = array('btn','btn-info', 'btn-lg', 'btn-block' );
+		}
+	}
+  }
+}
+
+function draftmasters_form_alter(&$form, &$form_state, &$form_id){
+    if (isset($form['actions'])){
+        foreach ($form['actions'] as $key => $value) {
+            if (is_array($form['actions'][$key])){
+                $form['actions'][$key]['#attributes']['class'] = array('btn', 'btn-primary');
+            }
+        }
+    }
+    if ($form_id == 'jobs_node_form'){
+        $form['#attributes'] = array('role'=>'form', 'class'=>array('node-form', 'node-jobs-form'));
+        $form['field_job_rate']['#attributes']['class'][] ='form-group';
+    }
+    // $form['#attributes']['role'][] = 'form';
+	if ($form_id == 'user_register_form'){
+		$form['#attributes']= array ('class'=>array('form-horizontal'));
+    $form['account']['mail']['#attributes'] = array('class'=>array('form-control'), 'placeholder'=>array('Your Email'));
+		$form['account']['mail']['#description'] = '';
+		unset($form['account']['name']);
+		$form['account']['name']['#attributes'] = array('class'=>array('form-control'), 'placeholder'=>array('Username'));
+    $validations = array_unshift($form['#validate'], 'draftmasters_generate_login_id');
+    $form['profile_client']['#title'] = '';
+    $form['profile_expert']['#title'] = '';
+    $form["#validate"][] = 'draftmasters_validate_register';
+
+    //$form['some_form']['#pre_render'] = array('dropdown_checkboxes');
+    // $form['profile_main']['field_user_tools']['und']['#entity']['#pre_render'] = array('dropdown_checkboxes');
+    // $form['profile_main']['field_user_skills']['und']['#entity']['#pre_render'] = array('dropdown_checkboxes');
+	}
+  if ($form_id == 'bids_node_form'){
+    $job = arg(3);
+    if ($job != '' && is_numeric($job)){
+      $node = node_load($job);
+      drupal_set_title('Submitting bid for '.$node->title);
+      
+      $form['title']['#default_value'] = 'Bid for '.$node->title;
+      $form['field_job_reference']['und']['#options'] = array($node->nid => $node->title);
+      $form['field_job_reference']['und']['#default_value'] = $node->nid;
+      $form['title']['#type'] = 'hidden';
+      $form['field_job_reference']['#disabled'] = true;
+      $form['field_bid_status']['#disabled'] = true;
+    }
+  }
+  if ($form_id == 'contract_node_form'){
+    $bid = arg(3);
+    if ($bid != '' && is_numeric($bid)){
+      $bid = node_load($bid);
+      drupal_set_title('Awarding contract for '.$bid->title);
+     
+      
+      $rate = $bid->field_bid_rate['und'][0]['value'];
+      $job = node_load($bid->field_job_reference['und'][0]['target_id']);
+
+      $form['title']['#default_value'] = 'Contract for '.$job->title;
+      $form['field_contract_amount']['und'][0]['value']['#default_value'] = $rate;
+      $form['field_contract_job']['und']['#default_value'] = $job->nid;
+      $form['field_contract_job']['und']['#options'] = array($job->nid => $job->title);
+      $form['field_contract_job']['#disabled'] = true;
+      $form['field_contract_bid']['und']['#default_value'] = $bid->nid;
+      $form['field_contract_bid']['und']['#options'] = array($bid->nid => $bid->title);
+      $form['field_contract_bid']['#disabled'] = true;
+    }
+  }
+}
+
+function draftmasters_generate_login_id($form, &$form_state)
+{
+  // drupal_set_message(print_r($form, true));
+  if ($form_state['values']['mail'] != ''){
+    $form_state['values']['name'] = $form_state['values']['mail'];
+  }
+  // drupal_set_message(print_r($form_state['values'], true));
+  // if(!is_numeric($form_state['values']['product'])|| empty($form_state['values']['product']))
+  //  {
+  //   form_set_error('product', t("Please select a product"));
+  //  }
+}
+
+/**
+ * Implements hook_user_view().
+ */
+function draftmasters_user_view($account, $view_mode, $langcode) {
+    // drupal_set_message(print_r($account, true));
+    $login = $account->login;
+    $last_login_date = date('d.M.Y', $login);
+    $last_login_time = date('g:i A', $login);
+    $roles = $account->roles;
+    $profile = profile2_load_by_user($account, 'client');
+    $account->content['rname'] = $profile->field_user_first_name['und'][0]['value'].' '.$profile->field_user_last_name['und'][0]['value'];
+    $role = 'user';
+    foreach ($roles as $key => $value) {
+        if ($value != 'authenticated user'){
+            $role = $value;
+            break;
+        }
+    }
+    if (in_array('expert', $account->roles)){
+      $account->content['is_expert'] = true;
+    }else{
+      $account->content['is_expert'] = false;
+    }
+    if (in_array('client', $account->roles)){
+      $account->content['is_client'] = true;
+    }else{
+      $account->content['is_client'] = false;
+    }
+    $account->content['summary']['roles'] = array(
+      '#type' => 'user_profile_item',
+      '#title' => t('Roles'),
+      '#markup' => ucfirst($role),
+      '#weight' => 10,
+      '#attributes' => array('class' => 'user-roles'),
+    );
+    $account->content['login-date'] = array(
+      '#type' => 'user_profile_item',
+      '#title' => t('Last Login Date'),
+      '#markup' => $last_login_date,
+      '#weight' => 10,
+      '#attributes' => array('class' => 'user-last-login'),
+    );
+    $account->content['login-time'] = array(
+      '#type' => 'user_profile_item',
+      '#title' => t('Last Login Time'),
+      '#markup' => $last_login_time,
+      '#weight' => 10,
+      '#attributes' => array('class' => 'user-last-time'),
+    );
+    $items = array('bids'=>0,'contracts'=>0,'earnings'=>0,'completed'=>0,'ongoing'=>0);
+
+    // Dashboard numbers
+    $items['bids'] = db_select('node', 'n')
+        ->condition('n.uid',$account->uid, '=')
+        ->condition('n.type', 'bids', '=')
+        ->fields('n', array('nid'))
+        ->execute()
+        ->rowCount();
+
+    $items['earnings']  = db_select('node', 'n')
+        ->condition('n.uid',$account->uid, '=')
+        ->condition('n.type', 'bids', '=')
+        ->fields('n', array('nid'))
+        ->execute()
+        ->rowCount();
+
+    $items['completed']  = db_select('node', 'n')
+        ->condition('n.uid',$account->uid, '=')
+        ->condition('n.type', 'bids', '=')
+        ->fields('n', array('nid'))
+        ->execute()
+        ->rowCount();
+
+    $items['ongoing']  = db_select('node', 'n')
+        ->condition('n.uid',$account->uid, '=')
+        ->condition('n.type', 'bids', '=')
+        ->fields('n', array('nid'))
+        ->execute()
+        ->rowCount();
+    
+    $account->content['recent_activities'] = array(
+      '#type' => 'user_profile_item',
+      '#title' => null,
+      '#markup' => draftmasters_add_recent_activities($account->uid),
+      '#weight' => 10,
+      '#attributes' => array('class' => 'user-'.$key),
+    );
+    $query = db_select('field_data_field_contract_bid', 'j');
+    $query->innerjoin('node', 'n', 'j.entity_id = n.nid');
+    $query->innerjoin('node', 's', 's.nid = j.field_contract_bid_target_id');
+    $query->addField('s', 'title', 'bid_title');
+    $query->addField('s', 'nid', 'bid_id');
+    $query->addField('n', 'nid', 'contract_id');
+    $query->fields('n', array('title'));
+    $query->fields('s', array('title', 'uid'));
+    $query->condition('n.type', 'contract', '=');
+    $query->condition('s.uid', $account->uid, '=');
+    $contracts = $query->execute();
+    $items['contracts'] = $contracts->rowCount();        // select n.title, s.title as c, s.uid from field_data_field_contract_bid j inner join node n on j.entity_id = n.nid inner join node s on s.nid=j.field_contract_bid_target_id
+    $jobs_contract = array();
+    foreach ($contracts as $contract) {
+      $jobs_contract[$contract->contract_id] = $contract->title;
+    }
+    foreach ($items as $key => $value) {
+        $account->content[$key] = array(
+          '#type' => 'user_profile_item',
+          '#title' => ucfirst(t($key)),
+          '#markup' => $value,
+          '#weight' => 10,
+          '#attributes' => array('class' => 'user-'.$key),
+        );
+    }
+    $account->content['awarded_contracts'] = $jobs_contract;
+
+    // Add payments to the expert
+    $query = db_select('payments', 'p');
+    $query->innerjoin('node', 'n', 'p.job_id = n.nid');
+    $query->fields('p', array());
+    $query->fields('n', array('title'));
+    if ($account->content['is_expert']){
+      $query->condition('p.expert_id', $account->uid);
+    }
+    if ($account->content['is_client']){
+      $query->condition('p.client_id', $account->uid);
+    } 
+    $payments = $query->execute();
+    $table_row='';
+    foreach ($payments as $key) {
+      $amount  =  ($account->content['is_expert']) ? $key->expert_amount : $key->client_amount;
+      $css = 'bg-important';
+      if ($key->status == 'posted'){
+        $css = 'bg-warning';
+      }elseif ($key->status =='review') {
+        $css ='bg-info';
+      }elseif ($key->status == 'paid') {
+        $css = 'bg-success';
+      }else{
+        $css = 'bg-important';
+      }
+      //creat a table
+      $table_row .= '<tr><td><p class="profile-name">'.$key->title.'</p><p class="profile-occupation">'.$key->status.'</p>
+                </td> <td><span class="badge '.$css.'">'.$amount.'</span></td>
+              </tr>';
+    }
+    $account->content['payments'] = '<table class="table table-hover personal-task"><tbody>'.$table_row.'</tbody></table>';
+}
+function draftmasters_node_insert($node) {
+  global $user;
+  db_insert('recent_activities')
+    ->fields(array(
+      'entity_id' => $node->nid,
+      'entity_type' => 'node',
+      'uid' => $user->uid,
+      'comment' => ' created '.$node->type.' '.$node->title,
+      'time_added' => REQUEST_TIME
+    ))
+    ->execute();
+
+  if ($node->type == 'jobs'){
+    // create a tentative payment
+    $client_amount = $node->field_job_rate['und'][0]['value'];
+
+    db_insert('payments')
+    ->fields(array(
+      'job_id' => $node->nid,
+      'client_id' => $node->uid,
+      'client_amount' => $client_amount,
+      'expert_amount' => 0,
+      'status' => 'posted',
+      'time_added' => REQUEST_TIME
+    ))->execute();
+  }
+  if ($node->type == 'contract'){
+    $bid = node_load($node->field_contract_bid['und'][0]['target_id']);
+    $expert = $bid->uid;
+    $expert_amount = $node->field_contract_amount['und'][0]['value'];
+
+    db_update('payments')
+    ->fields(array(
+      'expert_id' => $expert,
+      'contract_id' => $node->nid,
+      'expert_amount' => $expert_amount,
+      'status' => 'posted',
+      'time_added' => REQUEST_TIME
+    ))
+    ->condition('job_id', $node->field_contract_job['und'][0]['target_id'])
+    ->execute();
+  }
+  if ($node->type == 'projects'){
+    // close the contract
+
+    $contract = node_load($node->field_project_contract['und'][0]['target_id']);
+    $job_id = $contract->field_contract_job['und'][0]['target_id'];
+    $contract->field_contract_status['und'][0]['tid'] = get_taxonomy_term_id('Closed', 'contract_status');
+    $contract = node_submit($contract); // Prepare node for saving
+    node_save($contract);
+
+    // Update payments; update it from posted to under review
+    db_update('payments')->fields(array('status'=>'review'))
+      ->condition('job_id', $job_id, '=')
+      ->condition('expert_id', $node->uid, '=')
+      ->execute();
+
+    // Notify the client that the job is complete
+    send_closing_notification($node->nid);
+
+  }
+}
+function draftmasters_node_update($node) {
+  global $user;
+  db_insert('recent_activities')
+    ->fields(array(
+      'entity_id' => $node->nid,
+      'entity_type' => 'node',
+      'uid' => $user->uid,
+      'comment' => ' updated '.$node->type.' '.$node->title,
+      'time_added' => REQUEST_TIME
+    ))
+    ->execute();
+  if ($node->type =='jobs'){
+    // update the payments
+    $client_amount = $node->field_job_rate['und'][0]['value'];
+    $updated = db_update('payments') // 
+      ->fields(array(
+      'client_amount' => $client_amount,
+      ))
+      ->condition('job_id', $node->nid , '=')
+      ->execute();
+  }
+  if ($node->type =='contract'){
+    // update the payments
+    $expert_amount = $node->field_contract_amount['und'][0]['value'];
+    $bid = node_load($node->field_contract_bid['und'][0]['target_id']);
+    $expert = $bid->uid;
+    $updated = db_update('payments') // 
+      ->fields(array(
+      'client_amount' => $expert_amount,
+      ))
+      ->condition('job_id', $node->field_contract_job['und'][0]['target_id'], '=')
+      ->condition('expert_id', $bid->uid, '=')
+      ->execute();
+  }
+}
+function draftmasters_node_delete($node) {
+  global $user;
+  //since the node is deleted, its history is no longer important
+  // we delete the history
+  db_delete('recent_activities')
+    ->condition('entity_id', $node->nid)
+    ->condition('entity_type', 'node')
+    ->execute();
+  // We then update the history to show that the node was deleted
+  db_insert('recent_activities')
+    ->fields(array(
+      'entity_id' => $node->nid,
+      'entity_type' => 'node',
+      'uid' => $user->uid,
+      'comment' => ' deleted '.$node->type.' '.$node->title,
+      'time_added' => REQUEST_TIME
+    ))
+    ->execute();
+  if ($node->type =='contract'){
+    // update the payments
+    $expert_amount = $node->field_contract_amount['und'][0]['value'];
+    $bid = node_load($node->field_contract_bid['und'][0]['target_id']);
+    $expert = $bid->uid;
+    $updated = db_delete('payments')
+      ->condition('job_id', $node->field_contract_job['und'][0]['target_id'], '=')
+      ->condition('expert_id', $bid->uid, '=')
+      ->execute();
+  }
+}
+function draftmasters_user_insert(&$edit, $account, $category) {
+  global $user;
+  db_insert('recent_activities')
+    ->fields(array(
+      'entity_id' => $account->uid,
+      'entity_type' => 'user',
+      'uid' => $user->uid,
+      'comment' => ' created user '.$account->name,
+      'time_added' => REQUEST_TIME
+    ))
+    ->execute();
+}
+function draftmasters_user_update(&$edit, $account, $category) {
+  global $user;
+  db_insert('recent_activities')
+    ->fields(array(
+      'entity_id' => $account->uid,
+      'entity_type' => 'user',
+      'uid' => $user->uid,
+      'comment' => ' updated user '.$account->name,
+      'time_added' => REQUEST_TIME
+    ))
+    ->execute();
+}
+function draftmasters_user_delete($account) {
+  global $user;
+  //since the user is deleted, its history is no longer important
+  // we delete the history
+  db_delete('recent_activities')
+    ->condition('entity_id', $account->uid)
+    ->condition('entity_type', 'user')
+    ->execute();
+  // We then update the history to show that the user was deleted
+  db_insert('recent_activities')
+    ->fields(array(
+      'entity_id' => $account->uid,
+      'entity_type' => 'user',
+      'uid' => $user->uid,
+      'comment' => ' deleted user '.$account->name,
+      'time_added' => REQUEST_TIME
+    ))
+    ->execute();
+}
+function draftmasters_add_recent_activities($user_id, $range = 10){
+  global $user;
+  $account = user_load($user_id);
+  if (!$account->picture){
+	  $user_image = file_create_url(variable_get('user_picture_default', 'none'));
+  }else{
+	  $user_image = file_create_url($account->picture->uri);
+  }
+  $markup = '<table class="table table-hover personal-task"><tbody>';
+  $activities = db_select('recent_activities', 'ra')
+    ->fields('ra', array('comment', 'time_added', 'uid'))
+    ->condition('ra.uid', $user_id)
+    ->orderBy('ra.time_added', 'DESC')
+    ->range(0, $range)
+    ->execute();
+  if ($activities->rowCount() == 0){
+    $markup .= '<tr><td style="text-align: left;">No Recent activity yet</td></tr>';
+  }else{
+    foreach ($activities as $activity){
+      $prefix = $user->uid == $user_id ? 'You' : $account->name;
+      $markup .= '<tr>';
+      $markup .= '<td>'.date('d.M.Y', $activity->time_added).'</td>';
+      $markup .= '<td>'.$prefix.' '.$activity->comment.'</td>';
+      $markup .= '<td><img alt="" width="30" class="round-picture" height="30" src="'.$user_image.'"></td>';
+      $markup .= '</tr>';
+    }
+
+  }
+  $markup .= '</tbody></table>';
+  return $markup;
+}
+
+function draftmasters_node_view($node, $view_mode, $langcode) {
+  global $user;
+  $node->is_client = in_array('client', $user->roles);
+  $node->is_expert = in_array('expert', $user->roles);
+  
+
+  if($node->type == 'jobs'){
+    $tools = array();
+    $job_contract = db_select('field_data_field_contract_job','jc');
+    $job_contract->innerjoin('node', 'n', 'jc.field_contract_job_target_id = n.nid');
+    $job_contract->condition('n.nid',$node->nid);
+    $job_contract->fields('n', array('nid'));
+    $job_contract->fields('jc', array('entity_id', 'field_contract_job_target_id'));
+    $job_contract = $job_contract->execute();
+    $contract = array();
+    $html ='';
+    $awarded = ($job_contract->rowCount() >= 1);
+    if ($job_contract->rowCount() >= 1){
+      $node->awarded = true;
+      foreach ($job_contract as $awarded_contract) {
+        $contract[] = $awarded_contract->entity_id;
+      }
+    }else{
+      
+      if (!empty($node->field_job_tools)){
+        $node->awarded = false;
+        // get qualified experts
+        // Qualified if he has all the tools that the system requires
+        // or has any of the tools the job requires
+        // load the tags
+        $tags = $node->field_job_tools['und'];
+        $or = '';
+        foreach ($tags as $key =>$value) {
+          $or = ($or == '' )? $value['tid'] : $or. ' or ut.field_user_tools_tid = '.$value['tid'];
+          $tools[]= $value['taxonomy_term']->name;
+        }
+        $query = 'select f.field_user_first_name_value, l.field_user_last_name_value, users.uid from field_data_field_user_tools ut
+          inner join profile on profile.pid = ut.entity_id 
+          inner join users on users.uid = profile.uid 
+          inner join field_data_field_user_first_name f on users.uid = f.entity_id 
+          inner join field_data_field_user_last_name l on users.uid = l.entity_id 
+          where ut.field_user_tools_tid = '.$or;
+        $res = db_query($query);
+        $qualified = array();
+        $html = '<tbody>';
+        foreach ($res as $result) {
+          if (isset($qualified[$result->uid])){
+            $qualified[$result->uid] += 1;
+          }else{
+            $html .= '<tr>';
+            $qualified[$result->uid] =1;
+            $html .= '<tr><td>'.$result->field_user_first_name_value.' '.$result->field_user_last_name_value.'</td>';
+            $html .= '<td><div class="btn-group">
+                                      <a class="btn btn-primary assign-expert" id="'.$node->nid.'" job="'.$node->nid.'" expert="'.$result->uid.'" href="#"><i class="icon_plus_alt2"></i></a>
+                                  </div></td>';
+            $html .= '</tr>';
+          }
+        }
+         $html .= '</tbody>';
+      }
+    }
+    $node->tools = $tools;
+    $node->awarded = $awarded;
+    $node->contract = $contract;
+    $node->qualified = $html;
+  } 
+
+    //
+  
+}
+function create_user_bid(){
+  if (isset($_POST)){
+    $user_id = $_POST['user_id'];
+    $job = $_POST['job_id'];
+    request_bid($user_id, $job);
+    $message = array();
+    $message['user'] = $user_id;
+    $message['job'] = $job;
+    drupal_add_http_header('Content-Type', 'application/json');
+    drupal_add_http_header('Access-Control-Allow-Origin', "*");
+    drupal_add_http_header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE');
+    echo(json_encode($message));
+    drupal_exit();
+  }
+}
+function create_bid($user_id, $job_id){
+  $node = new stdClass();
+  $node->title = arg(2);
+  $node->type = 'bids';
+  node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+  $node->language = LANGUAGE_NONE; // Or e.g. 'en' if locale is enabled
+  $node->uid = $user_id;
+  $node->status = 1; //(1 or 0): published or not
+  $node->promote = 0; //(1 or 0): promoted to front page
+  $node->comment = 0; // 0 = comments disabled, 1 = read only, 2 = read/write
+  $node->field_job_reference[$node->language][]['nid'] = $job_id;
+  $node->field_bid_rate[$node->language][]['value'] = 0;
+  $node->field_bid_status[$node->language][]['tid'] = arg(3);
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+}
+
+function request_bid($user_id, $job_id){
+  global $base_url;
+  $job = node_load($job_id);
+  $account = user_load($user_id);
+  $recepient = profile2_load_by_user($account, 'client');
+  $f_name = $recepient->field_user_first_name['und'][0]['value'];
+  $l_name = $recepient->field_user_last_name['und'][0]['value'];
+  $bid_link =  $base_url.'/node/add/bids/'.$job_id;
+  $msg = 'Dear '.$f_name.' '.$l_name.'! <br>
+      We are writing to let you know that there is a job that we think you might be interested in.<br>
+      After reviewing your profile, we feel that one or more of your experiences may be required for the job<br>
+      If you are interested, please login to Draftmasters and use the link below to submit your bid<br>
+      <a href="'.$bid_link.'">'.$bid_link.'</a>
+      <br><br><br>
+      To Your Success,<br><br>
+      '.variable_get('site_name', 'Draftmasters').' Team<br>';
+  $subject = 'Request for a bid ('.$job->title.')';
+  
+  privatemsg_new_thread(array($recepient), $subject, $msg);
+}
+function send_closing_notification($project_id){
+  global $base_url;
+  $project = node_load($project_id);
+  $contract = node_load($project->field_project_contract['und'][0]['target_id']);
+  $job = node_load($contract->field_contract_job['und'][0]['target_id']);
+  $account = user_load($job->uid);
+  $expert = user_load($project->uid);
+  $recepient = profile2_load_by_user($account, 'client');
+  $link =  $base_url.'/node/'.$project_id;
+
+  // Expert
+  $expert_msg = '<br>
+      Thank you for completing the job - '.$job->title.' -. <br>
+      The Administrator will review the job and after the review, you will get a notification regarding your payment.
+      <br><br>
+      To Your Success,<br><br>
+      '.variable_get('site_name', 'Draftmasters').' Team<br>';
+  $subject = $job->title.' is now complete';
+
+  privatemsg_new_thread(array($expert), $subject, $expert_msg);
+
+  //Client
+  $client_msg = '<br>
+      We are writing to let you know that your job - '.$job->title.' - is now complete and is currently being reviewed. Once the review is complete, you will receive another notification informing you the status of the job.
+      <br><br>
+      To Your Success,<br><br>
+      '.variable_get('site_name', 'Draftmasters').' Team<br>';
+  $subject = $job->title.' is now complete';
+
+  privatemsg_new_thread(array($account), $subject, $client_msg);
+  // Get all administrators
+  $admin = db_select('users', 'u');
+  $admin->innerjoin('users_roles', 'r', 'u.uid=r.uid');
+  $admin->condition('r.rid', 3);
+  $admin->fields('u', array('uid'));
+  $admins = $admin->execute();
+  $recepients = array();
+  foreach ($admins as $value) {
+    $recepients[] = user_load($value->uid);
+  }
+  
+  $admin_msg = '<br>
+      We are writing to let you know that your job - '.$job->title.' - is now complete and is currently being reviewed. Once the review is complete, you will receive another notification informing you the status of the job.
+      <br>
+      You can review the uploaded files for this project here:<br>
+      <a href="'.$link.'">'.$link.'</a>
+      <br><br><br>
+      To Your Success,<br><br>
+      '.variable_get('site_name', 'Draftmasters').' Team<br>';
+  
+  privatemsg_new_thread($recepients, $subject, $admin_msg);
+}
+
+function get_taxonomy_term_id($assigned_tag, $vocabulary = NULL)
+{
+  $terms = taxonomy_get_term_by_name($assigned_tag, $vocabulary);
+  if (!empty($terms)) {
+    $first_term = array_shift($terms);
+    return $first_term->tid;
+  }
+}
+
+
+function draftmasters_validate_register($form, $form_state){
+  if (array_key_exists('profile_main', $form_state['values'])){
+    drupal_set_message(print_r($form_state['values'], true));
+    drupal_set_message('Profile is set');
+  }else{
+    drupal_set_message('Profile is not there');
+  }
+
+  if (array_key_exists('profile_main', $form_state['values'])){
+    if (count($form_state['values']['profile_main']['field_user_tools']['und']) < 2){
+      form_set_error('profile_main', 'Please select at least 2 tools');
+    }
+    if (count($form_state['values']['profile_main']['field_user_skills']['und']) < 2){
+      form_set_error('field_user_skills', 'Please select at least 2 skills');
+    }
+  }
+}

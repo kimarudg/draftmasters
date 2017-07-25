@@ -1,0 +1,27 @@
+<?php
+
+/**
+ * Enable block feature module
+ */
+function draftmasters_updates_update_7100(&$sandbox) {
+  drupal_set_message("Running updates for DraftMasters");
+  $modules = array(
+    'features',
+    'entity',
+    'diff',
+    'date',
+    'node_add_title',
+    'ctools',
+    'features_diff',
+    'features_override',
+    'entityreference',
+    'entity_api',
+    'views',
+    'views_ui'
+  );
+
+  $modules_enabled = module_enable($modules, TRUE);
+  if (!$modules_enabled) {
+    throw new DrupalUpdateException('Something went wrong; A dependency was missing.');
+  }
+}

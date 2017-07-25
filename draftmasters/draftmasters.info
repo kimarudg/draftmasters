@@ -1,0 +1,5 @@
+name = Draft Masters
+description = Provides necessary customizations that are required by Draft Masters.
+version = 7.x-1.0
+core = 7.x
+package = Draft Masters
